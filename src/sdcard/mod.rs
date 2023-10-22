@@ -28,20 +28,18 @@ use crate::{debug, warn};
 /// (which "flushes the SD cards registers" according to the spec).
 ///
 /// All the APIs take `&self` - mutability is handled using an inner `RefCell`.
-pub struct SdCard<SPI, CS, DELAYER>
-where
-    SPI: embedded_hal::spi::SpiDevice<u8>,
-    CS: embedded_hal::digital::OutputPin,
-    DELAYER: embedded_hal::delay::DelayUs,
+pub struct SdCard<SPI, DELAYER>
+    where
+        SPI: embedded_hal::spi::SpiDevice<u8>,
+        DELAYER: embedded_hal::delay::DelayUs,
 {
-    inner: RefCell<SdCardInner<SPI, CS, DELAYER>>,
+    inner: RefCell<SdCardInner<SPI, DELAYER>>,
 }
 
-impl<SPI, CS, DELAYER> SdCard<SPI, CS, DELAYER>
-where
-    SPI: embedded_hal::spi::SpiDevice<u8> + embedded_hal::spi::SpiDevice<u8>,
-    CS: embedded_hal::digital::OutputPin,
-    DELAYER: embedded_hal::delay::DelayUs,
+impl<SPI, DELAYER> SdCard<SPI, DELAYER>
+    where
+        SPI: embedded_hal::spi::SpiDevice<u8> + embedded_hal::spi::SpiDevice<u8>,
+        DELAYER: embedded_hal::delay::DelayUs,
 {
     /// Create a new SD/MMC Card driver using a raw SPI interface.
     ///
@@ -49,8 +47,8 @@ where
     /// deferred until a method is called on the object.
     ///
     /// Uses the default options.
-    pub fn new(spi: SPI, cs: CS, delayer: DELAYER) -> SdCard<SPI, CS, DELAYER> {
-        Self::new_with_options(spi, cs, delayer, AcquireOpts::default())
+    pub fn new(spi: SPI, delayer: DELAYER) -> SdCard<SPI, DELAYER> {
+        Self::new_with_options(spi, delayer, AcquireOpts::default())
     }
 
     /// Construct a new SD/MMC Card driver, using a raw SPI interface and the given options.
@@ -59,14 +57,12 @@ where
     /// deferred until a method is called on the object.
     pub fn new_with_options(
         spi: SPI,
-        cs: CS,
         delayer: DELAYER,
         options: AcquireOpts,
-    ) -> SdCard<SPI, CS, DELAYER> {
+    ) -> SdCard<SPI, DELAYER> {
         SdCard {
             inner: RefCell::new(SdCardInner {
                 spi,
-                cs,
                 delayer,
                 card_type: None,
                 options,
@@ -82,8 +78,8 @@ where
     /// Useful if you need to re-clock the SPI, but does not perform card
     /// initialisation.
     pub fn spi<T, F>(&self, func: F) -> T
-    where
-        F: FnOnce(&mut SPI) -> T,
+        where
+            F: FnOnce(&mut SPI) -> T,
     {
         let mut inner = self.inner.borrow_mut();
         func(&mut inner.spi)
@@ -146,11 +142,10 @@ where
     }
 }
 
-impl<SPI, CS, DELAYER> BlockDevice for SdCard<SPI, CS, DELAYER>
-where
-    SPI: embedded_hal::spi::SpiDevice<u8> + embedded_hal::spi::SpiDevice<u8>,
-    CS: embedded_hal::digital::OutputPin,
-    DELAYER: embedded_hal::delay::DelayUs,
+impl<SPI, DELAYER> BlockDevice for SdCard<SPI, DELAYER>
+    where
+        SPI: embedded_hal::spi::SpiDevice<u8> + embedded_hal::spi::SpiDevice<u8>,
+        DELAYER: embedded_hal::delay::DelayUs,
 {
     type Error = Error;
 
@@ -197,24 +192,21 @@ where
 /// Represents an SD Card on an SPI bus.
 ///
 /// All the APIs required `&mut self`.
-struct SdCardInner<SPI, CS, DELAYER>
-where
-    SPI: embedded_hal::spi::SpiDevice<u8> + embedded_hal::spi::SpiDevice<u8>,
-    CS: embedded_hal::digital::OutputPin,
-    DELAYER: embedded_hal::delay::DelayUs,
+struct SdCardInner<SPI, DELAYER>
+    where
+        SPI: embedded_hal::spi::SpiDevice<u8> + embedded_hal::spi::SpiDevice<u8>,
+        DELAYER: embedded_hal::delay::DelayUs,
 {
     spi: SPI,
-    cs: CS,
     delayer: DELAYER,
     card_type: Option<CardType>,
     options: AcquireOpts,
 }
 
-impl<SPI, CS, DELAYER> SdCardInner<SPI, CS, DELAYER>
-where
-    SPI: embedded_hal::spi::SpiDevice<u8> + embedded_hal::spi::SpiDevice<u8>,
-    CS: embedded_hal::digital::OutputPin,
-    DELAYER: embedded_hal::delay::DelayUs,
+impl<SPI, DELAYER> SdCardInner<SPI, DELAYER>
+    where
+        SPI: embedded_hal::spi::SpiDevice<u8> + embedded_hal::spi::SpiDevice<u8>,
+        DELAYER: embedded_hal::delay::DelayUs,
 {
     /// Read one or more blocks, starting at the given block index.
     fn read(&mut self, blocks: &mut [Block], start_block_idx: BlockIdx) -> Result<(), Error> {
@@ -223,22 +215,20 @@ where
             Some(CardType::SDHC) => start_block_idx.0,
             None => return Err(Error::CardNotFound),
         };
-        self.with_chip_select(|s| {
-            if blocks.len() == 1 {
-                // Start a single-block read
-                s.card_command(CMD17, start_idx)?;
-                s.read_data(&mut blocks[0].contents)?;
-            } else {
-                // Start a multi-block read
-                s.card_command(CMD18, start_idx)?;
-                for block in blocks.iter_mut() {
-                    s.read_data(&mut block.contents)?;
-                }
-                // Stop the read
-                s.card_command(CMD12, 0)?;
+        if blocks.len() == 1 {
+            // Start a single-block read
+            self.card_command(CMD17, start_idx)?;
+            self.read_data(&mut blocks[0].contents)?;
+        } else {
+            // Start a multi-block read
+            self.card_command(CMD18, start_idx)?;
+            for block in blocks.iter_mut() {
+                self.read_data(&mut block.contents)?;
             }
-            Ok(())
-        })
+            // Stop the read
+            self.card_command(CMD12, 0)?;
+        }
+        Ok(())
     }
 
     /// Write one or more blocks, starting at the given block index.
@@ -248,74 +238,66 @@ where
             Some(CardType::SDHC) => start_block_idx.0,
             None => return Err(Error::CardNotFound),
         };
-        self.with_chip_select(|s| {
-            if blocks.len() == 1 {
-                // Start a single-block write
-                s.card_command(CMD24, start_idx)?;
-                s.write_data(DATA_START_BLOCK, &blocks[0].contents)?;
-                s.wait_not_busy(Delay::new_write())?;
-                if s.card_command(CMD13, 0)? != 0x00 {
-                    return Err(Error::WriteError);
-                }
-                if s.read_byte()? != 0x00 {
-                    return Err(Error::WriteError);
-                }
-            } else {
-                // > It is recommended using this command preceding CMD25, some of the cards will be faster for Multiple
-                // > Write Blocks operation. Note that the host should send ACMD23 just before WRITE command if the host
-                // > wants to use the pre-erased feature
-                s.card_acmd(ACMD23, blocks.len() as u32)?;
-                // wait for card to be ready before sending the next command
-                s.wait_not_busy(Delay::new_write())?;
-
-                // Start a multi-block write
-                s.card_command(CMD25, start_idx)?;
-                for block in blocks.iter() {
-                    s.wait_not_busy(Delay::new_write())?;
-                    s.write_data(WRITE_MULTIPLE_TOKEN, &block.contents)?;
-                }
-                // Stop the write
-                s.wait_not_busy(Delay::new_write())?;
-                s.write_byte(STOP_TRAN_TOKEN)?;
+        if blocks.len() == 1 {
+            // Start a single-block write
+            self.card_command(CMD24, start_idx)?;
+            self.write_data(DATA_START_BLOCK, &blocks[0].contents)?;
+            self.wait_not_busy(Delay::new_write())?;
+            if self.card_command(CMD13, 0)? != 0x00 {
+                return Err(Error::WriteError);
             }
-            Ok(())
-        })
+            if self.read_byte()? != 0x00 {
+                return Err(Error::WriteError);
+            }
+        } else {
+            // > It is recommended using this command preceding CMD25, some of the cards will be faster for Multiple
+            // > Write Blocks operation. Note that the host should send ACMD23 just before WRITE command if the host
+            // > wants to use the pre-erased feature
+            self.card_acmd(ACMD23, blocks.len() as u32)?;
+            // wait for card to be ready before sending the next command
+            self.wait_not_busy(Delay::new_write())?;
+
+            // Start a multi-block write
+            self.card_command(CMD25, start_idx)?;
+            for block in blocks.iter() {
+                self.wait_not_busy(Delay::new_write())?;
+                self.write_data(WRITE_MULTIPLE_TOKEN, &block.contents)?;
+            }
+            // Stop the write
+            self.wait_not_busy(Delay::new_write())?;
+            self.write_byte(STOP_TRAN_TOKEN)?;
+        }
+        Ok(())
     }
 
     /// Determine how many blocks this device can hold.
     fn num_blocks(&mut self) -> Result<BlockCount, Error> {
-        let num_blocks = self.with_chip_select(|s| {
-            let csd = s.read_csd()?;
-            debug!("CSD: {:?}", csd);
-            match csd {
-                Csd::V1(ref contents) => Ok(contents.card_capacity_blocks()),
-                Csd::V2(ref contents) => Ok(contents.card_capacity_blocks()),
-            }
-        })?;
+        let csd = self.read_csd()?;
+        debug!("CSD: {:?}", csd);
+        let num_blocks = match csd {
+            Csd::V1(ref contents) => Ok(contents.card_capacity_blocks()),
+            Csd::V2(ref contents) => Ok(contents.card_capacity_blocks()),
+        }?;
         Ok(BlockCount(num_blocks))
     }
 
     /// Return the usable size of this SD card in bytes.
     fn num_bytes(&mut self) -> Result<u64, Error> {
-        self.with_chip_select(|s| {
-            let csd = s.read_csd()?;
-            debug!("CSD: {:?}", csd);
-            match csd {
-                Csd::V1(ref contents) => Ok(contents.card_capacity_bytes()),
-                Csd::V2(ref contents) => Ok(contents.card_capacity_bytes()),
-            }
-        })
+        let csd = self.read_csd()?;
+        debug!("CSD: {:?}", csd);
+        match csd {
+            Csd::V1(ref contents) => Ok(contents.card_capacity_bytes()),
+            Csd::V2(ref contents) => Ok(contents.card_capacity_bytes()),
+        }
     }
 
     /// Can this card erase single blocks?
     pub fn erase_single_block_enabled(&mut self) -> Result<bool, Error> {
-        self.with_chip_select(|s| {
-            let csd = s.read_csd()?;
-            match csd {
-                Csd::V1(ref contents) => Ok(contents.erase_single_block_enabled()),
-                Csd::V2(ref contents) => Ok(contents.erase_single_block_enabled()),
-            }
-        })
+        let csd = self.read_csd()?;
+        match csd {
+            Csd::V1(ref contents) => Ok(contents.erase_single_block_enabled()),
+            Csd::V2(ref contents) => Ok(contents.erase_single_block_enabled()),
+        }
     }
 
     /// Read the 'card specific data' block.
@@ -400,14 +382,6 @@ where
         }
     }
 
-    fn cs_high(&mut self) -> Result<(), Error> {
-        self.cs.set_high().map_err(|_| Error::GpioError)
-    }
-
-    fn cs_low(&mut self) -> Result<(), Error> {
-        self.cs.set_low().map_err(|_| Error::GpioError)
-    }
-
     /// Check the card is initialised.
     fn check_init(&mut self) -> Result<(), Error> {
         if self.card_type.is_none() {
@@ -422,103 +396,85 @@ where
     /// Initializes the card into a known state (or at least tries to).
     fn acquire(&mut self) -> Result<(), Error> {
         debug!("acquiring card with opts: {:?}", self.options);
-        let f = |s: &mut Self| {
-            // Assume it hasn't worked
-            let mut card_type;
-            trace!("Reset card..");
-            // Supply minimum of 74 clock cycles without CS asserted.
-            s.cs_high()?;
-            s.write_bytes(&[0xFF; 10])?;
-            // Assert CS
-            s.cs_low()?;
-            // Enter SPI mode.
-            let mut delay = Delay::new(s.options.acquire_retries);
-            for _attempts in 1.. {
-                trace!("Enter SPI mode, attempt: {}..", _attempts);
-                match s.card_command(CMD0, 0) {
-                    Err(Error::TimeoutCommand(0)) => {
-                        // Try again?
-                        warn!("Timed out, trying again..");
-                        // Try flushing the card as done here: https://github.com/greiman/SdFat/blob/master/src/SdCard/SdSpiCard.cpp#L170,
-                        // https://github.com/rust-embedded-community/embedded-sdmmc-rs/pull/65#issuecomment-1270709448
-                        for _ in 0..0xFF {
-                            s.write_byte(0xFF)?;
-                        }
-                    }
-                    Err(e) => {
-                        return Err(e);
-                    }
-                    Ok(R1_IDLE_STATE) => {
-                        break;
-                    }
-                    Ok(_r) => {
-                        // Try again
-                        warn!("Got response: {:x}, trying again..", _r);
-                    }
-                }
 
-                delay.delay(&mut s.delayer, Error::CardNotFound)?;
-            }
-            // Enable CRC
-            debug!("Enable CRC: {}", s.options.use_crc);
-            // "The SPI interface is initialized in the CRC OFF mode in default"
-            // -- SD Part 1 Physical Layer Specification v9.00, Section 7.2.2 Bus Transfer Protection
-            if s.options.use_crc && s.card_command(CMD59, 1)? != R1_IDLE_STATE {
-                return Err(Error::CantEnableCRC);
-            }
-            // Check card version
-            let mut delay = Delay::new_command();
-            let arg = loop {
-                if s.card_command(CMD8, 0x1AA)? == (R1_ILLEGAL_COMMAND | R1_IDLE_STATE) {
-                    card_type = CardType::SD1;
-                    break 0;
+        // Assume it hasn't worked
+        let mut card_type;
+        trace!("Reset card..");
+        // Supply minimum of 74 clock cycles without CS asserted.
+        // FIXME: Find out what 74 clock cycles actually is at the current frequency
+        self.delayer.delay_ms(10);
+        // Enter SPI mode.
+        let mut delay = Delay::new(self.options.acquire_retries);
+        for _attempts in 1.. {
+            trace!("Enter SPI mode, attempt: {}..", _attempts);
+            match self.card_command(CMD0, 0) {
+                Err(Error::TimeoutCommand(0)) => {
+                    // Try again?
+                    warn!("Timed out, trying again..");
+                    // Try flushing the card as done here: https://github.com/greiman/SdFat/blob/master/src/SdCard/SdSpiCard.cpp#L170,
+                    // https://github.com/rust-embedded-community/embedded-sdmmc-rs/pull/65#issuecomment-1270709448
+                    for _ in 0..0xFF {
+                        self.write_byte(0xFF)?;
+                    }
                 }
-                let mut buffer = [0xFF; 4];
-                s.transfer_bytes(&mut buffer)?;
-                let status = buffer[3];
-                if status == 0xAA {
-                    card_type = CardType::SD2;
-                    break 0x4000_0000;
+                Err(e) => {
+                    return Err(e);
                 }
-                delay.delay(&mut s.delayer, Error::TimeoutCommand(CMD8))?;
-            };
-
-            let mut delay = Delay::new_command();
-            while s.card_acmd(ACMD41, arg)? != R1_READY_STATE {
-                delay.delay(&mut s.delayer, Error::TimeoutACommand(ACMD41))?;
+                Ok(R1_IDLE_STATE) => {
+                    break;
+                }
+                Ok(_r) => {
+                    // Try again
+                    warn!("Got response: {:x}, trying again..", _r);
+                }
             }
 
-            if card_type == CardType::SD2 {
-                if s.card_command(CMD58, 0)? != 0 {
-                    return Err(Error::Cmd58Error);
-                }
-                let mut buffer = [0xFF; 4];
-                s.transfer_bytes(&mut buffer)?;
-                if (buffer[0] & 0xC0) == 0xC0 {
-                    card_type = CardType::SDHC;
-                }
-                // Ignore the other three bytes
+            delay.delay(&mut self.delayer, Error::CardNotFound)?;
+        }
+        // Enable CRC
+        debug!("Enable CRC: {}", self.options.use_crc);
+        // "The SPI interface is initialized in the CRC OFF mode in default"
+        // -- SD Part 1 Physical Layer Specification v9.00, Section 7.2.2 Bus Transfer Protection
+        if self.options.use_crc && self.card_command(CMD59, 1)? != R1_IDLE_STATE {
+            return Err(Error::CantEnableCRC);
+        }
+        // Check card version
+        let mut delay = Delay::new_command();
+        let arg = loop {
+            if self.card_command(CMD8, 0x1AA)? == (R1_ILLEGAL_COMMAND | R1_IDLE_STATE) {
+                card_type = CardType::SD1;
+                break 0;
             }
-            debug!("Card version: {:?}", card_type);
-            s.card_type = Some(card_type);
-            Ok(())
+            let mut buffer = [0xFF; 4];
+            self.transfer_bytes(&mut buffer)?;
+            let status = buffer[3];
+            if status == 0xAA {
+                card_type = CardType::SD2;
+                break 0x4000_0000;
+            }
+            delay.delay(&mut self.delayer, Error::TimeoutCommand(CMD8))?;
         };
-        let result = f(self);
-        self.cs_high()?;
-        let _ = self.read_byte();
-        result
-    }
 
-    /// Perform a function that might error with the chipselect low.
-    /// Always releases the chipselect, even if the function errors.
-    fn with_chip_select<F, T>(&mut self, func: F) -> Result<T, Error>
-    where
-        F: FnOnce(&mut Self) -> Result<T, Error>,
-    {
-        self.cs_low()?;
-        let result = func(self);
-        self.cs_high()?;
-        result
+        let mut delay = Delay::new_command();
+        while self.card_acmd(ACMD41, arg)? != R1_READY_STATE {
+            delay.delay(&mut self.delayer, Error::TimeoutACommand(ACMD41))?;
+        }
+
+        if card_type == CardType::SD2 {
+            if self.card_command(CMD58, 0)? != 0 {
+                return Err(Error::Cmd58Error);
+            }
+            let mut buffer = [0xFF; 4];
+            self.transfer_bytes(&mut buffer)?;
+            if (buffer[0] & 0xC0) == 0xC0 {
+                card_type = CardType::SDHC;
+            }
+            // Ignore the other three bytes
+        }
+        debug!("Card version: {:?}", card_type);
+        self.card_type = Some(card_type);
+        let _ = self.read_byte();
+        Ok(())
     }
 
     /// Perform an application-specific command.
@@ -573,9 +529,9 @@ where
 
     /// Send one byte and receive one byte over the SPI bus.
     fn transfer_byte(&mut self, out: u8) -> Result<u8, Error> {
-        let mut read_buf = [0u8;1];
+        let mut read_buf = [0u8; 1];
         self.spi
-            .transfer(&mut read_buf,&[out])
+            .transfer(&mut read_buf, &[out])
             .map_err(|_| Error::Transport)?;
         Ok(read_buf[0])
     }
@@ -743,8 +699,8 @@ impl Delay {
     /// value `err` is returned. Otherwise we wait for 10us and then return
     /// `Ok(())`.
     fn delay<T>(&mut self, delayer: &mut T, err: Error) -> Result<(), Error>
-    where
-        T: embedded_hal::delay::DelayUs,
+        where
+            T: embedded_hal::delay::DelayUs,
     {
         if self.retries_left == 0 {
             Err(err)
