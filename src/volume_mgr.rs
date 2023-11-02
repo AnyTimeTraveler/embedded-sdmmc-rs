@@ -641,7 +641,7 @@ where
     }
 
     /// Write to a open file.
-    pub fn write(&mut self, file: RawFile, buffer: &[u8]) -> Result<(), Error<D::Error>> {
+    pub fn write(&mut self, file: RawFile, buffer: &[u8]) -> Result<usize, Error<D::Error>> {
         #[cfg(feature = "defmt-log")]
         debug!("write(file={:?}, buffer={:x}", file, buffer);
 
@@ -763,7 +763,7 @@ where
         }
         self.open_files[file_idx].entry.attributes.set_archive(true);
         self.open_files[file_idx].entry.mtime = self.time_source.get_timestamp();
-        Ok(())
+        Ok(written)
     }
 
     /// Close a file with the given full path.

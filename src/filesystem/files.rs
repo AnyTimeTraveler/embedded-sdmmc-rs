@@ -3,6 +3,10 @@ use crate::{
     RawVolume, VolumeManager,
 };
 
+#[cfg(feature = "core_traits")]
+use no_std_io::io::{Read, Write};
+use no_std_io::io::ErrorKind;
+
 /// Represents an open file on disk.
 ///
 /// Do NOT drop this object! It doesn't hold a reference to the Volume Manager
@@ -29,9 +33,9 @@ impl RawFile {
         self,
         volume_mgr: &mut VolumeManager<D, T, MAX_DIRS, MAX_FILES, MAX_VOLUMES>,
     ) -> File<D, T, MAX_DIRS, MAX_FILES, MAX_VOLUMES>
-    where
-        D: crate::BlockDevice,
-        T: crate::TimeSource,
+        where
+            D: crate::BlockDevice,
+            T: crate::TimeSource,
     {
         File::new(self, volume_mgr)
     }
@@ -43,19 +47,19 @@ impl RawFile {
 /// it holds a mutable reference to its parent `VolumeManager`, which restricts
 /// which operations you can perform.
 pub struct File<'a, D, T, const MAX_DIRS: usize, const MAX_FILES: usize, const MAX_VOLUMES: usize>
-where
-    D: crate::BlockDevice,
-    T: crate::TimeSource,
+    where
+        D: crate::BlockDevice,
+        T: crate::TimeSource,
 {
     raw_file: RawFile,
     volume_mgr: &'a mut VolumeManager<D, T, MAX_DIRS, MAX_FILES, MAX_VOLUMES>,
 }
 
 impl<'a, D, T, const MAX_DIRS: usize, const MAX_FILES: usize, const MAX_VOLUMES: usize>
-    File<'a, D, T, MAX_DIRS, MAX_FILES, MAX_VOLUMES>
-where
-    D: crate::BlockDevice,
-    T: crate::TimeSource,
+File<'a, D, T, MAX_DIRS, MAX_FILES, MAX_VOLUMES>
+    where
+        D: crate::BlockDevice,
+        T: crate::TimeSource,
 {
     /// Create a new `File` from a `RawFile`
     pub fn new(
@@ -71,11 +75,13 @@ where
     /// Read from the file
     ///
     /// Returns how many bytes were read, or an error.
+    #[cfg(not(feature = "core_traits"))]
     pub fn read(&mut self, buffer: &mut [u8]) -> Result<usize, crate::Error<D::Error>> {
         self.volume_mgr.read(self.raw_file, buffer)
     }
 
     /// Write to the file
+    #[cfg(not(feature = "core_traits"))]
     pub fn write(&mut self, buffer: &[u8]) -> Result<(), crate::Error<D::Error>> {
         self.volume_mgr.write(self.raw_file, buffer)
     }
@@ -125,11 +131,52 @@ where
     }
 }
 
+#[cfg(feature = "core_traits")]
+impl<'a, D, T, const MAX_DIRS: usize, const MAX_FILES: usize, const MAX_VOLUMES: usize> Read
+for File<'a, D, T, MAX_DIRS, MAX_FILES, MAX_VOLUMES>
+    where
+        D: crate::BlockDevice,
+        T: crate::TimeSource,
+{
+    fn read(&mut self, buffer: &mut [u8]) -> Result<usize, no_std_io::io::Error> {
+        self.volume_mgr.read(self.raw_file, buffer)
+            .map_err(|error| {
+                #[cfg(feature = "log")]
+                log::error!("IO Error when writing to file: {:?}",error);
+
+                no_std_io::io::Error::new(ErrorKind::Other, "IO Error")
+            })
+    }
+}
+
+#[cfg(feature = "core_traits")]
+impl<'a, D, T, const MAX_DIRS: usize, const MAX_FILES: usize, const MAX_VOLUMES: usize> Write
+for File<'a, D, T, MAX_DIRS, MAX_FILES, MAX_VOLUMES>
+    where
+        D: crate::BlockDevice,
+        T: crate::TimeSource,
+{
+    fn write(&mut self, buffer: &[u8]) -> Result<usize, no_std_io::io::Error> {
+        self.volume_mgr.write(self.raw_file, buffer)
+            .map_err(|error| {
+                #[cfg(feature = "log")]
+                log::error!("IO Error when writing to file: {:?}",error);
+
+                no_std_io::io::Error::new(ErrorKind::Other, "IO Error (refer to logging for details)")
+            })
+    }
+
+    fn flush(&mut self) -> Result<(), no_std_io::io::Error> {
+        // no op
+        Ok(())
+    }
+}
+
 impl<'a, D, T, const MAX_DIRS: usize, const MAX_FILES: usize, const MAX_VOLUMES: usize> Drop
-    for File<'a, D, T, MAX_DIRS, MAX_FILES, MAX_VOLUMES>
-where
-    D: crate::BlockDevice,
-    T: crate::TimeSource,
+for File<'a, D, T, MAX_DIRS, MAX_FILES, MAX_VOLUMES>
+    where
+        D: crate::BlockDevice,
+        T: crate::TimeSource,
 {
     fn drop(&mut self) {
         self.volume_mgr
@@ -139,25 +186,25 @@ where
 }
 
 impl<'a, D, T, const MAX_DIRS: usize, const MAX_FILES: usize, const MAX_VOLUMES: usize>
-    core::fmt::Debug for File<'a, D, T, MAX_DIRS, MAX_FILES, MAX_VOLUMES>
-where
-    D: crate::BlockDevice,
-    T: crate::TimeSource,
+core::fmt::Debug for File<'a, D, T, MAX_DIRS, MAX_FILES, MAX_VOLUMES>
+    where
+        D: crate::BlockDevice,
+        T: crate::TimeSource,
 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "File({})", self.raw_file.0 .0)
+        write!(f, "File({})", self.raw_file.0.0)
     }
 }
 
 #[cfg(feature = "defmt-log")]
 impl<'a, D, T, const MAX_DIRS: usize, const MAX_FILES: usize, const MAX_VOLUMES: usize>
-    defmt::Format for File<'a, D, T, MAX_DIRS, MAX_FILES, MAX_VOLUMES>
-where
-    D: crate::BlockDevice,
-    T: crate::TimeSource,
+defmt::Format for File<'a, D, T, MAX_DIRS, MAX_FILES, MAX_VOLUMES>
+    where
+        D: crate::BlockDevice,
+        T: crate::TimeSource,
 {
     fn format(&self, fmt: defmt::Formatter) {
-        defmt::write!(fmt, "File({})", self.raw_file.0 .0)
+        defmt::write!(fmt, "File({})", self.raw_file.0.0)
     }
 }
 
